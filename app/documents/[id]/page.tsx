@@ -1,248 +1,269 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bot, FileText, Send, User, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
+import {
+  FileText,
+  Upload,
+  LogOut,
+  ExternalLink,
+  Trash2,
+  Sparkles,
+  Loader2,
+} from "lucide-react";
 
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-}
-
-interface DocumentData {
+interface DocumentItem {
   id: string;
   title: string;
   filename: string | null;
   summary: string | null;
-  extractedText: string | null;
-  messages?: Message[];
+  fileSize: number | null;
+  createdAt: string;
 }
 
-export default function DocumentPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const resolvedParams = use(params);
-  const documentId = resolvedParams.id;
+export default function DashboardPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
 
-  const [doc, setDoc] = useState<DocumentData | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputMessage, setInputMessage] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSending, setIsSending] = useState(false);
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Redirect if unauthenticated
   useEffect(() => {
-    async function fetchDoc() {
-      try {
-        const res = await fetch(`/api/documents/${documentId}`);
-        if (!res.ok) throw new Error("Document not found");
-        const data = await res.json();
-        setDoc(data);
-        setMessages(data.messages || []);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsLoading(false);
-      }
+    if (status === "unauthenticated") {
+      router.push("/login");
     }
-    fetchDoc();
-  }, [documentId]);
+  }, [status, router]);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputMessage.trim() || isSending) return;
-
-    const userText = inputMessage.trim();
-    setInputMessage("");
-
-    setMessages((prev) => [
-      ...prev,
-      { id: Date.now().toString(), role: "user", content: userText },
-    ]);
-    setIsSending(true);
-
+  // Fetch user's documents
+  const loadDocuments = async () => {
     try {
-      const res = await fetch(`/api/documents/${documentId}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userText }),
-      });
-
-      if (!res.ok) throw new Error("Failed to send message");
+      setLoading(true);
+      const res = await fetch("/api/documents");
+      if (!res.ok) throw new Error("Failed to load documents");
       const data = await res.json();
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: data.id || (Date.now() + 1).toString(),
-          role: "assistant",
-          content: data.reply || data.content,
-        },
-      ]);
+      setDocuments(Array.isArray(data) ? data : data.documents || []);
     } catch (err) {
       console.error(err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: "Sorry, I ran into an issue answering your question. Please try again.",
-        },
-      ]);
     } finally {
-      setIsSending(false);
+      setLoading(false);
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-gray-50 text-gray-600 font-medium">
-        Loading document...
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (status === "authenticated") {
+      loadDocuments();
+    }
+  }, [status]);
 
-  if (!doc) {
+  // Handle PDF upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== "application/pdf") {
+      setError("Please select a valid PDF file.");
+      return;
+    }
+
+    setUploading(true);
+    setError("");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("/api/documents/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to upload document");
+      }
+
+      const newDoc = await res.json();
+      // Navigate directly to the newly created document
+      if (newDoc?.id) {
+        router.push(`/documents/${newDoc.id}`);
+      } else {
+        await loadDocuments();
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to upload file");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // Handle Document Deletion
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!confirm("Are you sure you want to delete this document?")) return;
+
+    try {
+      const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setDocuments((prev) => prev.filter((d) => d.id !== id));
+      }
+    } catch (err) {
+      console.error("Failed to delete document", err);
+    }
+  };
+
+  if (status === "loading") {
     return (
-      <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-gray-50 text-gray-800">
-        <p className="text-xl font-semibold">Document not found in database</p>
-        <p className="text-sm text-gray-500">This document may have been deleted or created before the database sync.</p>
-        <Link
-          href="/dashboard"
-          className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow hover:bg-indigo-700"
-        >
-          Return to Dashboard & Upload Again
-        </Link>
+      <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-600">
+        <Loader2 className="h-6 w-6 animate-spin text-indigo-600 mr-2" />
+        Loading session...
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden bg-gray-100">
-      {/* Top Navbar */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6">
-        <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard"
-            className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Dashboard
-          </Link>
-          <span className="text-gray-300">/</span>
-          <span className="text-sm font-semibold text-gray-800 truncate max-w-md">
-            {doc.title || doc.filename || "Document Workspace"}
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      {/* Navigation Header */}
+      <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-8">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-6 w-6 text-indigo-600" />
+          <h1 className="text-xl font-bold tracking-tight text-gray-900">
+            PDF Intelligence
+          </h1>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <span className="text-sm font-medium text-gray-600">
+            {session?.user?.email}
           </span>
+          <button
+            onClick={() => signOut({ callbackUrl: "/login" })}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Sign Out
+          </button>
         </div>
       </header>
 
-      {/* Split Workspace */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Side: Summary + PDF Viewer */}
-        <div className="flex w-1/2 flex-col gap-4 overflow-y-auto border-r border-gray-200 bg-gray-50 p-6">
-          {doc.summary && (
-            <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-5 shadow-sm">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-900">
-                <Sparkles className="h-4 w-4 text-blue-600" />
-                <span>AI Executive Summary</span>
-              </div>
-              <p className="mt-2.5 text-sm leading-relaxed text-gray-700">
-                {doc.summary}
+      {/* Main Content Area */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-8">
+        {/* Top Action Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-8 border-b border-gray-200">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">My Documents</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Upload PDF documents to summarize, analyze, and query with AI.
+            </p>
+          </div>
+
+          <div>
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept="application/pdf"
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Uploading & Analyzing...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4" />
+                  Upload PDF
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Error Alert */}
+        {error && (
+          <div className="mt-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {/* Document Grid */}
+        <div className="mt-8">
+          {loading ? (
+            <div className="flex justify-center items-center py-20 text-gray-400">
+              <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+            </div>
+          ) : documents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gray-300 py-16 text-center">
+              <FileText className="h-12 w-12 text-gray-400 stroke-1 mb-3" />
+              <h3 className="text-base font-semibold text-gray-800">
+                No documents uploaded yet
+              </h3>
+              <p className="text-sm text-gray-500 mt-1 max-w-sm">
+                Click the "Upload PDF" button to analyze your first document.
               </p>
             </div>
-          )}
-
-          <div className="min-h-[500px] flex-1 overflow-hidden rounded-xl border border-gray-300 bg-white shadow-sm">
-            <iframe
-              src={`/api/documents/${doc.id}/file`}
-              className="h-full w-full border-0"
-              title="PDF Viewer"
-            />
-          </div>
-        </div>
-
-        {/* Right Side: Chat Bot */}
-        <div className="flex w-1/2 flex-col bg-white">
-          <div className="flex items-center gap-2 border-b border-gray-200 px-6 py-4">
-            <Bot className="h-5 w-5 text-indigo-600" />
-            <h3 className="text-sm font-semibold text-gray-800">
-              Document Assistant
-            </h3>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            {messages.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center text-center text-gray-400">
-                <FileText className="h-10 w-10 stroke-1 text-gray-300" />
-                <p className="mt-2 text-sm">Ask any question regarding this document.</p>
-              </div>
-            ) : (
-              messages.map((msg) => (
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {documents.map((doc) => (
                 <div
-                  key={msg.id}
-                  className={`flex gap-3 ${
-                    msg.role === "user" ? "justify-end" : "justify-start"
-                  }`}
+                  key={doc.id}
+                  className="group relative flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-6 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all"
                 >
-                  {msg.role === "assistant" && (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-                      <Bot className="h-4 w-4" />
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-5 w-5 text-indigo-600 shrink-0" />
+                        <h4 className="font-semibold text-gray-900 text-sm truncate max-w-[200px]">
+                          {doc.title || doc.filename || "Untitled Document"}
+                        </h4>
+                      </div>
+                      <button
+                        onClick={(e) => handleDelete(doc.id, e)}
+                        className="text-gray-400 hover:text-red-600 transition-colors p-1"
+                        title="Delete Document"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
-                  )}
 
-                  <div
-                    className={`max-w-[80%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${
-                      msg.role === "user"
-                        ? "bg-indigo-600 text-white"
-                        : "border border-gray-100 bg-gray-50 text-gray-800"
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                    {doc.summary && (
+                      <p className="mt-3 text-xs text-gray-600 line-clamp-3 leading-relaxed">
+                        {doc.summary}
+                      </p>
+                    )}
                   </div>
 
-                  {msg.role === "user" && (
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-600">
-                      <User className="h-4 w-4" />
-                    </div>
-                  )}
+                  <div className="mt-6 flex items-center justify-between border-t border-gray-100 pt-4">
+                    <span className="text-[11px] text-gray-400">
+                      {new Date(doc.createdAt).toLocaleDateString()}
+                    </span>
+                    <Link
+                      href={`/documents/${doc.id}`}
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                    >
+                      Open <ExternalLink className="h-3.5 w-3.5" />
+                    </Link>
+                  </div>
                 </div>
-              ))
-            )}
-
-            {isSending && (
-              <div className="flex items-center gap-3">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-2 text-sm text-gray-500">
-                  Analyzing document...
-                </div>
-              </div>
-            )}
-          </div>
-
-          <form onSubmit={handleSendMessage} className="border-t border-gray-200 p-4">
-            <div className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
-              <input
-                type="text"
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                placeholder="Ask any question about this document..."
-                className="flex-1 text-sm text-gray-900 outline-none placeholder:text-gray-400"
-              />
-              <button
-                type="submit"
-                disabled={!inputMessage.trim() || isSending}
-                className="rounded-md bg-indigo-600 p-1.5 text-white hover:bg-indigo-500 disabled:opacity-40"
-              >
-                <Send className="h-4 w-4" />
-              </button>
+              ))}
             </div>
-          </form>
+          )}
         </div>
-      </div>
+      </main>
     </div>
   );
 }

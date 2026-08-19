@@ -1,39 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-export async function GET(req: NextRequest, context: any) {
+export const dynamic = "force-dynamic";
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+
   try {
-    const rawParams = context?.params ? await context.params : null;
-    const id = rawParams?.id || req.nextUrl.pathname.split("/").filter(Boolean).pop();
-
-    if (!id) {
-      return NextResponse.json({ error: "Missing document ID." }, { status: 400 });
-    }
-
-    const document = await prisma.document.findFirst({
-      where: { OR: [{ id }, { shareToken: id }] },
+    const document = await prisma.document.findUnique({
+      where: { id },
       include: {
-        comments: {
-          where: { parentId: null }, // Only top-level comments
-          include: {
-            replies: {
-              orderBy: { createdAt: "asc" },
-            },
-          },
-          orderBy: { createdAt: "desc" },
+        messages: {
+          orderBy: { createdAt: "asc" },
         },
-        messages: { orderBy: { createdAt: "asc" } },
       },
     });
 
     if (!document) {
-      return NextResponse.json({ error: "Document not found." }, { status: 404 });
+      return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ document }, { status: 200 });
-  } catch (error: any) {
+    return NextResponse.json(document);
+  } catch (error) {
+    console.error("Failed to fetch document:", error);
     return NextResponse.json(
-      { error: error?.message || "Failed to retrieve document." },
+      { error: "Internal Server Error" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+
+  try {
+    await prisma.document.delete({
+      where: { id },
+    });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Failed to delete document:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error" },
       { status: 500 }
     );
   }
