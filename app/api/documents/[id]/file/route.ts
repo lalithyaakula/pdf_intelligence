@@ -25,9 +25,9 @@ export async function GET(
     targetPath = path.join(process.cwd(), "public", "uploads", doc.filename);
   }
 
-  if (!targetPath || !fs.existsSync(targetPath)) {
-    return new NextResponse("File not found on server", { status: 404 });
-  }
+  if (!targetPath || !fs.existsSync(/*turbopackIgnore: true*/ targetPath)) {
+  return new NextResponse("File not found on server", { status: 404 });
+}
 
   // turbopackIgnore prevents Next.js static analysis tracing warning
   const fileBuffer = fs.readFileSync(/*turbopackIgnore: true*/ targetPath);
