@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bot, FileText, Send, User } from "lucide-react";
+import { ArrowLeft, Bot, FileText, Send, User, Sparkles } from "lucide-react";
 
 interface Message {
   id: string;
@@ -16,7 +16,7 @@ interface DocumentData {
   filename: string | null;
   summary: string | null;
   extractedText: string | null;
-  messages: Message[];
+  messages?: Message[];
 }
 
 export default function DocumentPage({
@@ -27,19 +27,19 @@ export default function DocumentPage({
   const resolvedParams = use(params);
   const documentId = resolvedParams.id;
 
-  const [document, setDocument] = useState<DocumentData | null>(null);
+  const [doc, setDoc] = useState<DocumentData | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
 
   useEffect(() => {
-    async function fetchDocument() {
+    async function fetchDoc() {
       try {
         const res = await fetch(`/api/documents/${documentId}`);
-        if (!res.ok) throw new Error("Failed to load document");
+        if (!res.ok) throw new Error("Document not found");
         const data = await res.json();
-        setDocument(data);
+        setDoc(data);
         setMessages(data.messages || []);
       } catch (err) {
         console.error(err);
@@ -47,8 +47,7 @@ export default function DocumentPage({
         setIsLoading(false);
       }
     }
-
-    fetchDocument();
+    fetchDoc();
   }, [documentId]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -58,13 +57,10 @@ export default function DocumentPage({
     const userText = inputMessage.trim();
     setInputMessage("");
 
-    const optimisticMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: userText,
-    };
-
-    setMessages((prev) => [...prev, optimisticMessage]);
+    setMessages((prev) => [
+      ...prev,
+      { id: Date.now().toString(), role: "user", content: userText },
+    ]);
     setIsSending(true);
 
     try {
@@ -74,7 +70,7 @@ export default function DocumentPage({
         body: JSON.stringify({ message: userText }),
       });
 
-      if (!res.ok) throw new Error("Failed to generate response");
+      if (!res.ok) throw new Error("Failed to send message");
       const data = await res.json();
 
       setMessages((prev) => [
@@ -102,82 +98,80 @@ export default function DocumentPage({
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-500">
-        Loading document workspace...
+      <div className="flex h-screen w-full items-center justify-center bg-gray-50 text-gray-600 font-medium">
+        Loading document...
       </div>
     );
   }
 
-  if (!document) {
+  if (!doc) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-gray-50 text-gray-800">
-        <p className="text-lg font-medium">Document not found</p>
+      <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-gray-50 text-gray-800">
+        <p className="text-xl font-semibold">Document not found in database</p>
+        <p className="text-sm text-gray-500">This document may have been deleted or created before the database sync.</p>
         <Link
           href="/dashboard"
-          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white shadow hover:bg-indigo-700"
         >
-          Back to Dashboard
+          Return to Dashboard & Upload Again
         </Link>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen flex-col bg-gray-50">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-gray-100">
       {/* Top Navbar */}
-      <header className="flex h-14 items-center justify-between border-b bg-white px-6">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6">
         <div className="flex items-center gap-3">
           <Link
             href="/dashboard"
-            className="flex items-center gap-1 text-sm font-medium text-gray-600 hover:text-gray-900"
+            className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900"
           >
             <ArrowLeft className="h-4 w-4" />
             Dashboard
           </Link>
           <span className="text-gray-300">/</span>
-          <span className="text-sm font-semibold text-gray-800 truncate max-w-sm">
-            {document.title || document.filename || "Untitled Document"}
+          <span className="text-sm font-semibold text-gray-800 truncate max-w-md">
+            {doc.title || doc.filename || "Document Workspace"}
           </span>
         </div>
       </header>
 
-      {/* Main Split-View Workspace */}
-      <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-2">
-        {/* Left Side: Summary & PDF Document Viewer */}
-        <div className="flex flex-col gap-4 overflow-y-auto border-r border-gray-200 p-6">
-          {/* AI Executive Summary Card */}
-          {document.summary && (
-            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-5 shadow-sm">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-800">
-                <span>✨ AI EXECUTIVE SUMMARY</span>
+      {/* Split Workspace */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Side: Summary + PDF Viewer */}
+        <div className="flex w-1/2 flex-col gap-4 overflow-y-auto border-r border-gray-200 bg-gray-50 p-6">
+          {doc.summary && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-900">
+                <Sparkles className="h-4 w-4 text-blue-600" />
+                <span>AI Executive Summary</span>
               </div>
-              <p className="mt-3 text-sm leading-relaxed text-gray-700">
-                {document.summary}
+              <p className="mt-2.5 text-sm leading-relaxed text-gray-700">
+                {doc.summary}
               </p>
             </div>
           )}
 
-          {/* PDF Viewer Container */}
-          <div className="relative min-h-[550px] flex-1 overflow-hidden rounded-xl border border-gray-200 bg-gray-900 shadow-sm">
+          <div className="min-h-[500px] flex-1 overflow-hidden rounded-xl border border-gray-300 bg-white shadow-sm">
             <iframe
-              src={`/api/documents/${document.id}/file`}
+              src={`/api/documents/${doc.id}/file`}
               className="h-full w-full border-0"
               title="PDF Viewer"
             />
           </div>
         </div>
 
-        {/* Right Side: Interactive AI Chatbot */}
-        <div className="flex flex-col bg-white">
-          {/* Chat Header */}
-          <div className="flex items-center gap-2 border-b border-gray-100 px-6 py-4">
+        {/* Right Side: Chat Bot */}
+        <div className="flex w-1/2 flex-col bg-white">
+          <div className="flex items-center gap-2 border-b border-gray-200 px-6 py-4">
             <Bot className="h-5 w-5 text-indigo-600" />
             <h3 className="text-sm font-semibold text-gray-800">
               Document Assistant
             </h3>
           </div>
 
-          {/* Messages Area */}
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {messages.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center text-center text-gray-400">
@@ -199,13 +193,13 @@ export default function DocumentPage({
                   )}
 
                   <div
-                    className={`max-w-[80%] rounded-xl px-4 py-2.5 text-sm ${
+                    className={`max-w-[80%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${
                       msg.role === "user"
                         ? "bg-indigo-600 text-white"
                         : "border border-gray-100 bg-gray-50 text-gray-800"
                     }`}
                   >
-                    <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
                   </div>
 
                   {msg.role === "user" && (
@@ -229,11 +223,7 @@ export default function DocumentPage({
             )}
           </div>
 
-          {/* Chat Input Bar */}
-          <form
-            onSubmit={handleSendMessage}
-            className="border-t border-gray-100 p-4"
-          >
+          <form onSubmit={handleSendMessage} className="border-t border-gray-200 p-4">
             <div className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
               <input
                 type="text"
