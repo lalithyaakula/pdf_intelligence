@@ -1,0 +1,58 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String     @id @default(cuid())
+  name      String?
+  email     String     @unique
+  password  String
+  documents Document[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Document {
+  id            String    @id @default(cuid())
+  title         String
+  filename      String
+  filePath      String
+  extractedText String?
+  summary       String?
+  shareToken    String    @unique @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages      Message[]
+  comments      Comment[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  role       String   // "user" | "model"
+  content    String
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+}
+
+model Comment {
+  id          String    @id @default(cuid())
+  content     String
+  authorName  String
+  createdAt   DateTime  @default(now())
+
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  documentId  String
+
+  // Threading: Parent and Child Replies
+  parentId    String?
+  parent      Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies     Comment[] @relation("CommentReplies")
+}

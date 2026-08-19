@@ -1,0 +1,71 @@
+Yes. Based on your current file tree, add **`skills-lock.json`** and the **`*.sqlite`** variants so local databases and assistant lock files are never committed accidentally.
+
+Here is the final, complete **`.gitignore`** ready for your repo:
+
+```text
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js build & cache
+/.next/
+/out/
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# environment variables
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# prisma & local databases
+/app/generated/prisma
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# uploads
+/public/uploads/*
+!/public/uploads/.gitkeep
+/uploads
+
+# editor & IDE
+.vscode/
+.idea/
+
+# AI assistant artifacts & lockfiles
+.claude/
+.agents/
+agents/
+AGENTS.md
+CLAUDE.md
+*.agent
+.windsurf/
+.windsurfrules
+skills-lock.json
+
