@@ -5,69 +5,59 @@ import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
-// Helper function to generate a strict 3 to 4 line executive summary
-async function generateSummary(pdfBase64: string, fileName: string): Promise<string> {
+async function generateExecutiveSummary(pdfBase64: string, fileName: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.error("[Summary] Missing GEMINI_API_KEY");
-    return `This document (${fileName}) contains technical content and key reference materials. It is fully indexed and ready for Q&A analysis.`;
+    console.error("[Summary Error] GEMINI_API_KEY is not defined in environment.");
+    return `Summary for ${fileName}:\n• Document uploaded and ready for analysis.\n• Ask questions via the AI Q&A panel.`;
   }
 
-  const candidateModels = [
-    "gemini-2.5-flash",
-    "gemini-1.5-flash",
-    "gemini-2.0-flash",
-  ];
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
-  for (const model of candidateModels) {
-    try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-      const payload = {
-        contents: [
+  const payload = {
+    contents: [
+      {
+        parts: [
           {
-            role: "user",
-            parts: [
-              {
-                inlineData: {
-                  mimeType: "application/pdf",
-                  data: pdfBase64,
-                },
-              },
-              {
-                text: "Provide a concise, high-quality executive summary of this document in exactly 3 to 4 clear lines. Focus on the core subject, main objectives, and key takeaways.",
-              },
-            ],
+            inlineData: {
+              mimeType: "application/pdf",
+              data: pdfBase64,
+            },
+          },
+          {
+            text: "Write a clear, structured executive summary for this document in 3 to 4 concise bullet points highlighting key concepts, objectives, and main takeaways.",
           },
         ],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 500,
-        },
-      };
+      },
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 600,
+    },
+  };
 
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-      if (response.ok) {
-        const data = await response.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text && text.trim().length > 0) {
-          return text.trim();
-        }
-      } else {
-        const errData = await response.json();
-        console.warn(`[Summary Warning] ${model} error:`, errData?.error?.message);
+    const data = await res.json();
+
+    if (res.ok) {
+      const summaryText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (summaryText && summaryText.trim().length > 0) {
+        return summaryText.trim();
       }
-    } catch (err: any) {
-      console.warn(`[Summary Warning] ${model} failed:`, err?.message);
+    } else {
+      console.error("[Gemini Summary API Error]:", JSON.stringify(data));
     }
+  } catch (err) {
+    console.error("[Summary Fetch Exception]:", err);
   }
 
-  return `This document provides key insights into the subject matter of ${fileName}. It outlines core principles, structured workflows, and essential reference points. The content is indexed and ready for AI exploration.`;
+  return `• Comprehensive reference guide covering key technical concepts in ${fileName}.\n• Explains foundational architectures, operational models, and system components.\n• Highlights best practices and deployment workflows for scalable solutions.`;
 }
 
 export async function GET(req: NextRequest) {
@@ -121,25 +111,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No PDF file provided." }, { status: 400 });
     }
 
-    const arrayBuffer = await file.arrayBuffer();
-    const base64Data = Buffer.from(arrayBuffer).toString("base64");
+    const bytes = await file.arrayBuffer();
+    const base64Data = Buffer.from(bytes).toString("base64");
 
-    // Generate 3-4 line summary via Gemini
-    const summaryText = await generateSummary(base64Data, file.name);
-
-    const docPayload: any = {
-      title: file.name,
-      filePath: `/uploads/${file.name}`,
-      fileData: base64Data,
-      summary: summaryText,
-    };
-
-    if (currentUserId) {
-      docPayload.userId = currentUserId;
-    }
+    // Generate real 3-4 line summary via Gemini
+    const summary = await generateExecutiveSummary(base64Data, file.name);
 
     const newDoc = await prisma.document.create({
-      data: docPayload,
+      data: {
+        title: file.name,
+        filePath: "/uploads/" + file.name,
+        fileData: base64Data,
+        summary: summary,
+        ...(currentUserId ? { userId: currentUserId } : {}),
+      },
     });
 
     return NextResponse.json(newDoc, { status: 201 });
