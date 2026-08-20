@@ -1,202 +1,156 @@
 "use client";
 
-import { useEffect, useState, use, useRef } from "react";
+import React, { useState, useEffect, use } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { 
-  ArrowLeft, 
-  Mail, 
-  Link as LinkIcon, 
-  Check, 
-  Bot, 
-  MessageSquare, 
-  Sparkles,
-  Loader2
-} from "lucide-react";
 
-interface CommentItem {
+interface DocumentData {
   id: string;
-  authorName: string;
-  text: string;
-  createdAt: string;
+  title: string;
+  filePath: string;
+  summary?: string | null;
+  createdAt?: string;
 }
 
 interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+interface CommentData {
   id: string;
-  sender: "user" | "ai";
   text: string;
+  authorName: string;
+  createdAt: string;
 }
 
 export default function DocumentWorkspacePage({
   params,
 }: {
-  params: Promise<{ id: string }> | { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  // Unwrap async params in Next.js 15+
+  const resolvedParams = use(params);
+  const documentId = resolvedParams.id;
   const router = useRouter();
-  
-  const unwrappedParams = typeof (params as any)?.then === "function" 
-    ? use(params as Promise<{ id: string }>) 
-    : (params as { id: string });
-  const documentId = unwrappedParams.id;
 
-  const [document, setDocument] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"chat" | "comments">("chat");
+  const [document, setDocument] = useState<DocumentData | null>(null);
+  const [loadingDoc, setLoadingDoc] = useState(true);
+  const [docError, setDocError] = useState<string | null>(null);
 
-  // Chat State (Persisted)
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [inputQuery, setInputQuery] = useState("");
-  const [generating, setGenerating] = useState(false);
-  const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  // Active Tab: "chat" | "comments" | "summary"
+  const [activeTab, setActiveTab] = useState<"chat" | "comments" | "summary">("chat");
 
-  // Comments State (Persisted)
-  const [comments, setComments] = useState<CommentItem[]>([]);
+  // Chat State
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Comments State
+  const [comments, setComments] = useState<CommentData[]>([]);
   const [commentInput, setCommentInput] = useState("");
   const [postingComment, setPostingComment] = useState(false);
 
-  // Share & Invite Modals
+  // Share state
   const [copiedLink, setCopiedLink] = useState(false);
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteDone, setInviteDone] = useState(false);
 
-  const scrollToBottom = () => {
-    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
+  // 1. Fetch Document Metadata
   useEffect(() => {
-    scrollToBottom();
-  }, [chatMessages, generating]);
+    async function loadDocument() {
+      try {
+        setLoadingDoc(true);
+        const res = await fetch(`/api/documents/${documentId}`);
+        if (!res.ok) {
+          if (res.status === 404) {
+            setDocError("Document not found. It may have been deleted or moved.");
+          } else {
+            setDocError("Failed to fetch document details.");
+          }
+          return;
+        }
+        const data = await res.json();
+        setDocument(data);
+      } catch (err: any) {
+        setDocError(err.message || "An unexpected error occurred.");
+      } finally {
+        setLoadingDoc(false);
+      }
+    }
 
-  // Fetch comments from DB
+    if (documentId) {
+      loadDocument();
+      fetchComments();
+    }
+  }, [documentId]);
+
+  // 2. Fetch Comments List
   const fetchComments = async () => {
-    if (!documentId) return;
     try {
-      const res = await fetch(`/api/documents/${documentId}/comments`);
+      const res = await fetch(`/api/documents/${documentId}/comments`, {
+        cache: "no-store",
+      });
       if (res.ok) {
         const data = await res.json();
         setComments(Array.isArray(data) ? data : []);
       }
     } catch (err) {
-      console.error("Failed to load comments:", err);
+      console.error("[Comments] Error loading comments:", err);
     }
   };
 
-  // Fetch saved chat messages from DB
-  const fetchChatHistory = async (docTitle: string) => {
-    if (!documentId) return;
-    try {
-      const res = await fetch(`/api/documents/${documentId}/chat`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setChatMessages(data);
-        } else {
-          setChatMessages([
-            {
-              id: "welcome",
-              sender: "ai",
-              text: `Hello! You are viewing **${docTitle}**. Ask any question to analyze this document with AI.`,
-            },
-          ]);
-        }
-      }
-    } catch (err) {
-      console.error("Failed to load chat history:", err);
-    }
-  };
-
-  // Initial Document, Chat History, & Comments Loader
+  // 3. Auto-poll comments every 4 seconds
   useEffect(() => {
-    async function loadDoc() {
-      if (!documentId) return;
-      try {
-        setLoading(true);
-        const res = await fetch(`/api/documents/${documentId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setDocument(data);
-          await fetchChatHistory(data.title);
-        }
-        await fetchComments();
-      } catch (err) {
-        console.error("Error loading document:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadDoc();
-  }, [documentId]);
-
-  // Real-time Live Polling for Comments (every 3s)
-  useEffect(() => {
-    if (!documentId) return;
-    const interval = setInterval(() => {
-      fetchComments();
-    }, 3000);
-
+    const interval = setInterval(fetchComments, 4000);
     return () => clearInterval(interval);
   }, [documentId]);
 
+  // 4. Send Question to Gemini Chat Route
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputQuery.trim() || generating) return;
+    if (!chatInput.trim() || isGenerating) return;
 
-    const userText = inputQuery.trim();
-    setInputQuery("");
-
-    // Append user message immediately
-    const tempUserMsgId = Date.now().toString();
-    setChatMessages((prev) => [
-      ...prev,
-      { id: tempUserMsgId, sender: "user", text: userText },
-    ]);
-
-    setGenerating(true);
+    const userQuery = chatInput.trim();
+    setChatInput("");
+    setMessages((prev) => [...prev, { role: "user", content: userQuery }]);
+    setIsGenerating(true);
 
     try {
       const res = await fetch(`/api/documents/${documentId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userText }),
+        body: JSON.stringify({ message: userQuery }),
       });
 
       const data = await res.json();
 
-      if (res.ok && data.reply) {
-        setChatMessages((prev) => [
+      if (!res.ok) {
+        setMessages((prev) => [
           ...prev,
           {
-            id: data.id || (Date.now() + 1).toString(),
-            sender: "ai",
-            text: data.reply,
+            role: "assistant",
+            content: `⚠️ Error: ${data.error || "Failed to process question."}`,
           },
         ]);
       } else {
-        setChatMessages((prev) => [
+        setMessages((prev) => [
           ...prev,
-          {
-            id: (Date.now() + 1).toString(),
-            sender: "ai",
-            text: `⚠️ Error: ${data.error || "Failed to generate AI response."}`,
-          },
+          { role: "assistant", content: data.reply || "No response generated." },
         ]);
       }
     } catch (err: any) {
-      console.error("Chat client error:", err);
-      setChatMessages((prev) => [
+      setMessages((prev) => [
         ...prev,
         {
-          id: (Date.now() + 1).toString(),
-          sender: "ai",
-          text: `⚠️ Network error: Could not reach the chat endpoint.`,
+          role: "assistant",
+          content: "⚠️ Network error while communicating with AI service.",
         },
       ]);
     } finally {
-      setGenerating(false);
+      setIsGenerating(false);
     }
   };
 
+  // 5. Submit New Comment
   const handlePostComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!commentInput.trim() || postingComment) return;
@@ -220,13 +174,13 @@ export default function DocumentWorkspacePage({
         alert(errData.error || "Failed to post comment.");
       }
     } catch (err) {
-      console.error("Error posting comment:", err);
-      alert("Network error while submitting comment.");
+      alert("Error submitting comment.");
     } finally {
       setPostingComment(false);
     }
   };
 
+  // 6. Copy Document Share URL
   const handleCopyShareLink = () => {
     if (typeof window !== "undefined") {
       navigator.clipboard.writeText(window.location.href);
@@ -235,561 +189,447 @@ export default function DocumentWorkspacePage({
     }
   };
 
-  if (loading) {
+  if (loadingDoc) {
     return (
-      <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", backgroundColor: "#f8fafc" }}>
-        <Loader2 className="animate-spin" style={{ width: "36px", height: "36px", color: "#2563eb" }} />
+      <div style={styles.centerContainer}>
+        <div style={styles.spinner}></div>
+        <p style={{ marginTop: "16px", color: "#64748b", fontWeight: 500 }}>
+          Loading document workspace...
+        </p>
       </div>
     );
   }
 
-  const pdfUrl = document?.filePath ? document.filePath : `/api/documents/${documentId}/file`;
+  if (docError || !document) {
+    return (
+      <div style={styles.centerContainer}>
+        <h2 style={{ fontSize: "20px", color: "#ef4444", marginBottom: "8px" }}>
+          Document Unavailable
+        </h2>
+        <p style={{ color: "#64748b", marginBottom: "20px" }}>{docError}</p>
+        <Link href="/dashboard" style={styles.primaryBtn}>
+          ← Return to Dashboard
+        </Link>
+      </div>
+    );
+  }
+
+  const pdfStreamUrl = `/api/documents/${documentId}/file`;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", backgroundColor: "#ffffff", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
-      {/* Top Navbar */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "12px 24px",
-          borderBottom: "1px solid #e2e8f0",
-          backgroundColor: "#ffffff",
-        }}
-      >
+    <div style={styles.pageWrapper}>
+      {/* Top Navigation Bar */}
+      <header style={styles.header}>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
           <button
             onClick={() => router.push("/dashboard")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              background: "transparent",
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              borderBottom: "none",
-              fontSize: "14px",
-              fontWeight: 500,
-              color: "#334155",
-              cursor: "pointer",
-            }}
+            style={styles.backBtn}
+            title="Back to Dashboard"
           >
-            <ArrowLeft style={{ width: "16px", height: "16px" }} />
-            Dashboard
+            ← Dashboard
           </button>
-          <span style={{ fontSize: "16px", fontWeight: "700", color: "#0f172a" }}>
-            {document?.title || "Document Workspace"}
-          </span>
+          <div>
+            <h1 style={styles.docTitle}>{document.title}</h1>
+            <span style={styles.docBadge}>PDF Intelligence Workspace</span>
+          </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <button
-            onClick={() => {
-              setShowInviteModal(true);
-              setInviteDone(false);
-              setInviteEmail("");
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "7px 14px",
-              borderRadius: "8px",
-              border: "1px solid #e2e8f0",
-              backgroundColor: "#f8fafc",
-              color: "#334155",
-              fontSize: "13px",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            <Mail style={{ width: "14px", height: "14px", color: "#c084fc" }} />
-            Email Invite
-          </button>
-
-          <button
-            onClick={handleCopyShareLink}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "7px 16px",
-              borderRadius: "8px",
-              backgroundColor: "#2563eb",
-              color: "#ffffff",
-              fontSize: "13px",
-              fontWeight: 600,
-              borderTop: "none",
-              borderLeft: "none",
-              borderRight: "none",
-              borderBottom: "none",
-              cursor: "pointer",
-            }}
-          >
-            {copiedLink ? (
-              <>
-                <Check style={{ width: "14px", height: "14px" }} />
-                Copied!
-              </>
-            ) : (
-              <>
-                <LinkIcon style={{ width: "14px", height: "14px" }} />
-                Share Link
-              </>
-            )}
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button onClick={handleCopyShareLink} style={styles.shareBtn}>
+            {copiedLink ? "✓ Link Copied!" : "🔗 Share Document"}
           </button>
         </div>
       </header>
 
-      {/* Main Workspace */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* Left Column: AI Executive Summary & PDF Preview */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            borderRight: "1px solid #e2e8f0",
-            backgroundColor: "#f8fafc",
-            overflow: "hidden",
-          }}
-        >
-          {/* Executive Summary Top Box */}
-          <div style={{ padding: "16px 20px 8px 20px" }}>
-            <div
-              style={{
-                backgroundColor: "#eff6ff",
-                border: "1px solid #bfdbfe",
-                borderRadius: "14px",
-                padding: "16px 18px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
-                <Sparkles style={{ width: "16px", height: "16px", color: "#f59e0b" }} />
-                <span style={{ fontSize: "12px", fontWeight: "800", color: "#1e40af", letterSpacing: "0.5px" }}>
-                  AI EXECUTIVE SUMMARY
-                </span>
-              </div>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "13px",
-                  lineHeight: "1.6",
-                  color: "#1e3a8a",
-                }}
-              >
-                {document?.summary ||
-                  "This document has been indexed into PDF Intelligence. Core takeaways, key concepts, and architectural definitions are ready for interactive AI analysis and collaboration."}
-              </p>
-            </div>
-          </div>
-
-          {/* Embedded PDF Viewer */}
-          <div style={{ flex: 1, padding: "12px 20px 20px 20px" }}>
-            <iframe
-              key={document?.id}
-              src={`${pdfUrl}#toolbar=1&navpanes=0&scrollbar=1`}
-              title={document?.title || "PDF Document Viewer"}
-              style={{
-                width: "100%",
-                height: "100%",
-                borderRadius: "12px",
-                border: "1px solid #cbd5e1",
-                backgroundColor: "#525659",
-              }}
-            />
-          </div>
+      {/* Main Split Layout */}
+      <div style={styles.mainLayout}>
+        {/* Left Side: PDF Stream Viewer */}
+        <div style={styles.viewerContainer}>
+          <iframe
+            key={documentId}
+            src={`${pdfStreamUrl}#toolbar=1&navpanes=0&scrollbar=1`}
+            title={document.title}
+            style={styles.iframe}
+          />
         </div>
 
-        {/* Right Column: PDF Chat & Comments Tabs */}
-        <div
-          style={{
-            width: "480px",
-            display: "flex",
-            flexDirection: "column",
-            backgroundColor: "#ffffff",
-          }}
-        >
-          {/* Tab Selection */}
-          <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0" }}>
+        {/* Right Side: Interactive AI Assistant & Collaboration */}
+        <div style={styles.sidebar}>
+          {/* Navigation Tabs */}
+          <div style={styles.tabContainer}>
             <button
-              onClick={() => setActiveTab("chat")}
               style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                padding: "14px",
-                fontSize: "14px",
-                fontWeight: activeTab === "chat" ? 700 : 500,
+                ...styles.tabBtn,
+                borderBottom: activeTab === "chat" ? "2px solid #2563eb" : "none",
                 color: activeTab === "chat" ? "#2563eb" : "#64748b",
-                borderTop: "none",
-                borderLeft: "none",
-                borderRight: "none",
-                borderBottomWidth: "2px",
-                borderBottomStyle: "solid",
-                borderBottomColor: activeTab === "chat" ? "#2563eb" : "transparent",
-                background: "transparent",
-                cursor: "pointer",
+                fontWeight: activeTab === "chat" ? 600 : 500,
               }}
+              onClick={() => setActiveTab("chat")}
             >
-              <Bot style={{ width: "16px", height: "16px" }} />
-              PDF Chat
+              💬 AI Q&A
             </button>
-
             <button
-              onClick={() => setActiveTab("comments")}
               style={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                padding: "14px",
-                fontSize: "14px",
-                fontWeight: activeTab === "comments" ? 700 : 500,
+                ...styles.tabBtn,
+                borderBottom: activeTab === "comments" ? "2px solid #2563eb" : "none",
                 color: activeTab === "comments" ? "#2563eb" : "#64748b",
-                borderTop: "none",
-                borderLeft: "none",
-                borderRight: "none",
-                borderBottomWidth: "2px",
-                borderBottomStyle: "solid",
-                borderBottomColor: activeTab === "comments" ? "#2563eb" : "transparent",
-                background: "transparent",
-                cursor: "pointer",
+                fontWeight: activeTab === "comments" ? 600 : 500,
               }}
+              onClick={() => setActiveTab("comments")}
             >
-              <MessageSquare style={{ width: "16px", height: "16px" }} />
-              Comments ({comments.length})
+              📝 Notes ({comments.length})
+            </button>
+            <button
+              style={{
+                ...styles.tabBtn,
+                borderBottom: activeTab === "summary" ? "2px solid #2563eb" : "none",
+                color: activeTab === "summary" ? "#2563eb" : "#64748b",
+                fontWeight: activeTab === "summary" ? 600 : 500,
+              }}
+              onClick={() => setActiveTab("summary")}
+            >
+              📄 Summary
             </button>
           </div>
 
-          {/* Tab 1: AI Chat */}
+          {/* TAB 1: Chat Q&A */}
           {activeTab === "chat" && (
-            <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-              <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
-                {chatMessages.map((msg, index) => {
-                  const isLastMessage = index === chatMessages.length - 1;
-                  const isUserAndGenerating = isLastMessage && msg.sender === "user" && generating;
-
-                  return (
+            <div style={styles.panelContent}>
+              <div style={styles.chatScrollArea}>
+                {messages.length === 0 ? (
+                  <div style={styles.emptyState}>
+                    <p style={{ fontWeight: 600, color: "#334155" }}>
+                      Ask questions about this PDF
+                    </p>
+                    <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "4px" }}>
+                      Gemini is strictly grounded to this document and will refuse off-topic
+                      queries.
+                    </p>
+                  </div>
+                ) : (
+                  messages.map((msg, index) => (
                     <div
-                      key={msg.id}
+                      key={index}
                       style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: msg.sender === "user" ? "flex-end" : "flex-start",
+                        ...styles.chatBubble,
+                        alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+                        backgroundColor: msg.role === "user" ? "#2563eb" : "#f1f5f9",
+                        color: msg.role === "user" ? "#ffffff" : "#1e293b",
                       }}
                     >
-                      {msg.sender === "user" ? (
-                        <>
-                          <div
-                            style={{
-                              backgroundColor: "#2563eb",
-                              color: "#ffffff",
-                              padding: "10px 16px",
-                              borderRadius: "14px 14px 2px 14px",
-                              fontSize: "14px",
-                              maxWidth: "85%",
-                            }}
-                          >
-                            {msg.text}
-                          </div>
-                          
-                          {/* Inline "generating..." label below user's query */}
-                          {isUserAndGenerating && (
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                marginTop: "6px",
-                                paddingRight: "4px",
-                                fontSize: "12px",
-                                fontWeight: 500,
-                                color: "#64748b",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  width: "6px",
-                                  height: "6px",
-                                  borderRadius: "50%",
-                                  backgroundColor: "#2563eb",
-                                  display: "inline-block",
-                                  animation: "pulse 1.4s infinite ease-in-out",
-                                }}
-                              />
-                              <span>generating answer...</span>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <div
-                          style={{
-                            backgroundColor: "#f1f5f9",
-                            borderRadius: "14px",
-                            padding: "16px",
-                            fontSize: "13px",
-                            lineHeight: "1.6",
-                            color: "#1e293b",
-                            maxWidth: "95%",
-                            whiteSpace: "pre-wrap",
-                          }}
-                        >
-                          {msg.text}
-                        </div>
-                      )}
+                      <p style={{ whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.5" }}>
+                        {msg.content}
+                      </p>
                     </div>
-                  );
-                })}
-
-                <div ref={chatBottomRef} />
+                  ))
+                )}
+                {isGenerating && (
+                  <div style={styles.generatingIndicator}>
+                    <span style={styles.pulseDot}></span>
+                    Analyzing document and generating answer...
+                  </div>
+                )}
               </div>
 
-              {/* Chat Input */}
-              <form
-                onSubmit={handleSendMessage}
-                style={{
-                  display: "flex",
-                  gap: "10px",
-                  padding: "16px",
-                  borderTop: "1px solid #e2e8f0",
-                  backgroundColor: "#ffffff",
-                }}
-              >
+              <form onSubmit={handleSendMessage} style={styles.inputForm}>
                 <input
                   type="text"
-                  placeholder="Ask a question about this document..."
-                  value={inputQuery}
-                  onChange={(e) => setInputQuery(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: "10px 14px",
-                    borderRadius: "8px",
-                    border: "1px solid #cbd5e1",
-                    fontSize: "13px",
-                    outline: "none",
-                  }}
+                  placeholder="Ask any question about this document..."
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  style={styles.textInput}
+                  disabled={isGenerating}
                 />
                 <button
                   type="submit"
-                  disabled={generating || !inputQuery.trim()}
+                  disabled={isGenerating || !chatInput.trim()}
                   style={{
-                    padding: "10px 18px",
-                    borderRadius: "8px",
-                    backgroundColor: "#2563eb",
-                    color: "#ffffff",
-                    fontWeight: "600",
-                    fontSize: "13px",
-                    borderTop: "none",
-                    borderLeft: "none",
-                    borderRight: "none",
-                    borderBottom: "none",
-                    cursor: generating || !inputQuery.trim() ? "not-allowed" : "pointer",
-                    opacity: generating || !inputQuery.trim() ? 0.7 : 1,
+                    ...styles.submitBtn,
+                    opacity: isGenerating || !chatInput.trim() ? 0.6 : 1,
                   }}
                 >
-                  Send
+                  Ask
                 </button>
               </form>
             </div>
           )}
 
-          {/* Tab 2: Comments (Live Shared via Link) */}
+          {/* TAB 2: Notes & Comments */}
           {activeTab === "comments" && (
-            <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-              <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: "14px" }}>
+            <div style={styles.panelContent}>
+              <div style={styles.chatScrollArea}>
                 {comments.length === 0 ? (
-                  <p style={{ fontSize: "13px", color: "#94a3b8", textAlign: "center", marginTop: "24px" }}>
-                    No comments yet. Start a discussion below.
-                  </p>
+                  <div style={styles.emptyState}>
+                    <p style={{ fontWeight: 600, color: "#334155" }}>No notes added yet</p>
+                    <p style={{ fontSize: "13px", color: "#94a3b8", marginTop: "4px" }}>
+                      Leave notes or team feedback synced directly with Supabase.
+                    </p>
+                  </div>
                 ) : (
-                  comments.map((c) => (
-                    <div
-                      key={c.id}
-                      style={{
-                        border: "1px solid #e2e8f0",
-                        borderRadius: "10px",
-                        padding: "14px",
-                        backgroundColor: "#ffffff",
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                        <strong style={{ fontSize: "13px", color: "#0f172a" }}>{c.authorName}</strong>
-                        <span style={{ fontSize: "11px", color: "#94a3b8" }}>
-                          {new Date(c.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  comments.map((comment) => (
+                    <div key={comment.id} style={styles.commentCard}>
+                      <div style={styles.commentHeader}>
+                        <span style={styles.authorBadge}>{comment.authorName}</span>
+                        <span style={styles.commentTime}>
+                          {new Date(comment.createdAt).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                         </span>
                       </div>
-                      <p style={{ margin: "0 0 10px 0", fontSize: "13px", color: "#334155" }}>{c.text}</p>
-                      <button
-                        type="button"
-                        style={{
-                          background: "transparent",
-                          borderTop: "none",
-                          borderLeft: "none",
-                          borderRight: "none",
-                          borderBottom: "none",
-                          fontSize: "12px",
-                          color: "#2563eb",
-                          fontWeight: "600",
-                          padding: 0,
-                          cursor: "pointer",
-                        }}
-                      >
-                        ↩ Reply
-                      </button>
+                      <p style={styles.commentText}>{comment.text}</p>
                     </div>
                   ))
                 )}
               </div>
 
-              {/* Comment Input */}
-              <form
-                onSubmit={handlePostComment}
-                style={{
-                  display: "flex",
-                  gap: "10px",
-                  padding: "16px",
-                  borderTop: "1px solid #e2e8f0",
-                  backgroundColor: "#ffffff",
-                }}
-              >
+              <form onSubmit={handlePostComment} style={styles.inputForm}>
                 <input
                   type="text"
-                  placeholder="Add a comment..."
+                  placeholder="Type a team note or feedback..."
                   value={commentInput}
                   onChange={(e) => setCommentInput(e.target.value)}
-                  style={{
-                    flex: 1,
-                    padding: "10px 14px",
-                    borderRadius: "8px",
-                    border: "1px solid #cbd5e1",
-                    fontSize: "13px",
-                    outline: "none",
-                  }}
+                  style={styles.textInput}
+                  disabled={postingComment}
                 />
                 <button
                   type="submit"
                   disabled={postingComment || !commentInput.trim()}
                   style={{
-                    padding: "10px 18px",
-                    borderRadius: "8px",
-                    backgroundColor: "#2563eb",
-                    color: "#ffffff",
-                    fontWeight: "600",
-                    fontSize: "13px",
-                    borderTop: "none",
-                    borderLeft: "none",
-                    borderRight: "none",
-                    borderBottom: "none",
-                    cursor: postingComment ? "not-allowed" : "pointer",
+                    ...styles.submitBtn,
+                    opacity: postingComment || !commentInput.trim() ? 0.6 : 1,
                   }}
                 >
-                  {postingComment ? "Posting..." : "Post"}
+                  Post
                 </button>
               </form>
             </div>
           )}
+
+          {/* TAB 3: Summary */}
+          {activeTab === "summary" && (
+            <div style={{ ...styles.panelContent, padding: "20px" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 600, color: "#1e293b", marginBottom: "12px" }}>
+                Executive Summary
+              </h3>
+              <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#475569", whiteSpace: "pre-wrap" }}>
+                {document.summary || "No executive summary has been generated for this document."}
+              </p>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Invite Modal */}
-      {showInviteModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(15, 23, 42, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 9999,
-          }}
-        >
-          <div
-            style={{
-              width: "100%",
-              maxWidth: "420px",
-              backgroundColor: "#ffffff",
-              borderRadius: "16px",
-              padding: "24px",
-              boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)",
-            }}
-          >
-            <h3 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: "700", color: "#0f172a" }}>
-              Invite to Document
-            </h3>
-            <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
-              Send an email invite to collaborate on <strong>{document?.title}</strong>.
-            </p>
-
-            {inviteDone ? (
-              <div style={{ padding: "12px", borderRadius: "8px", backgroundColor: "#f0fdf4", color: "#16a34a", fontSize: "13px", marginBottom: "16px" }}>
-                Invite sent successfully!
-              </div>
-            ) : (
-              <input
-                type="email"
-                placeholder="colleague@example.com"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "10px 14px",
-                  borderRadius: "8px",
-                  border: "1px solid #cbd5e1",
-                  fontSize: "14px",
-                  boxSizing: "border-box",
-                  marginBottom: "16px",
-                  outline: "none",
-                }}
-              />
-            )}
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              <button
-                onClick={() => setShowInviteModal(false)}
-                style={{
-                  padding: "8px 16px",
-                  borderRadius: "8px",
-                  border: "1px solid #cbd5e1",
-                  backgroundColor: "#ffffff",
-                  cursor: "pointer",
-                  fontSize: "13px",
-                }}
-              >
-                Close
-              </button>
-              {!inviteDone && (
-                <button
-                  onClick={() => {
-                    if (inviteEmail.trim()) setInviteDone(true);
-                  }}
-                  style={{
-                    padding: "8px 18px",
-                    borderRadius: "8px",
-                    backgroundColor: "#2563eb",
-                    color: "#ffffff",
-                    fontWeight: "600",
-                    borderTop: "none",
-                    borderLeft: "none",
-                    borderRight: "none",
-                    borderBottom: "none",
-                    cursor: "pointer",
-                    fontSize: "13px",
-                  }}
-                >
-                  Send Invite
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
+
+// Visual Inline Styles
+const styles: { [key: string]: React.CSSProperties } = {
+  pageWrapper: {
+    display: "flex",
+    flexDirection: "column",
+    height: "100vh",
+    backgroundColor: "#f8fafc",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  },
+  centerContainer: {
+    height: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+  },
+  spinner: {
+    width: "36px",
+    height: "36px",
+    border: "3px solid #e2e8f0",
+    borderTopColor: "#2563eb",
+    borderRadius: "50%",
+    animation: "spin 1s linear infinite",
+  },
+  header: {
+    height: "64px",
+    backgroundColor: "#ffffff",
+    borderBottom: "1px solid #e2e8f0",
+    padding: "0 24px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  backBtn: {
+    backgroundColor: "#f1f5f9",
+    border: "none",
+    padding: "6px 12px",
+    borderRadius: "6px",
+    fontSize: "13px",
+    fontWeight: 500,
+    color: "#475569",
+    cursor: "pointer",
+  },
+  docTitle: {
+    fontSize: "16px",
+    fontWeight: 600,
+    color: "#0f172a",
+    margin: 0,
+    maxWidth: "400px",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  docBadge: {
+    fontSize: "11px",
+    color: "#2563eb",
+    fontWeight: 600,
+    textTransform: "uppercase",
+    letterSpacing: "0.5px",
+  },
+  shareBtn: {
+    backgroundColor: "#f8fafc",
+    border: "1px solid #cbd5e1",
+    padding: "8px 14px",
+    borderRadius: "6px",
+    fontSize: "13px",
+    fontWeight: 500,
+    color: "#1e293b",
+    cursor: "pointer",
+  },
+  mainLayout: {
+    flex: 1,
+    display: "flex",
+    overflow: "hidden",
+  },
+  viewerContainer: {
+    flex: "1 1 60%",
+    backgroundColor: "#334155",
+    padding: "16px",
+    display: "flex",
+  },
+  iframe: {
+    width: "100%",
+    height: "100%",
+    borderRadius: "8px",
+    border: "none",
+    backgroundColor: "#ffffff",
+  },
+  sidebar: {
+    flex: "0 0 420px",
+    backgroundColor: "#ffffff",
+    borderLeft: "1px solid #e2e8f0",
+    display: "flex",
+    flexDirection: "column",
+  },
+  tabContainer: {
+    display: "flex",
+    borderBottom: "1px solid #e2e8f0",
+    backgroundColor: "#ffffff",
+  },
+  tabBtn: {
+    flex: 1,
+    padding: "14px 0",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    fontSize: "13px",
+  },
+  panelContent: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+  },
+  chatScrollArea: {
+    flex: 1,
+    padding: "16px",
+    overflowY: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px",
+  },
+  chatBubble: {
+    maxWidth: "85%",
+    padding: "10px 14px",
+    borderRadius: "12px",
+  },
+  generatingIndicator: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    fontSize: "13px",
+    color: "#64748b",
+    fontStyle: "italic",
+    padding: "6px 12px",
+  },
+  pulseDot: {
+    width: "8px",
+    height: "8px",
+    backgroundColor: "#2563eb",
+    borderRadius: "50%",
+    display: "inline-block",
+  },
+  emptyState: {
+    textAlign: "center",
+    marginTop: "60px",
+    padding: "0 20px",
+  },
+  inputForm: {
+    display: "flex",
+    padding: "12px 16px",
+    borderTop: "1px solid #e2e8f0",
+    backgroundColor: "#ffffff",
+    gap: "8px",
+  },
+  textInput: {
+    flex: 1,
+    padding: "10px 14px",
+    borderRadius: "8px",
+    border: "1px solid #cbd5e1",
+    fontSize: "13px",
+    outline: "none",
+  },
+  submitBtn: {
+    backgroundColor: "#2563eb",
+    color: "#ffffff",
+    border: "none",
+    padding: "0 18px",
+    borderRadius: "8px",
+    fontWeight: 600,
+    fontSize: "13px",
+    cursor: "pointer",
+  },
+  commentCard: {
+    backgroundColor: "#f8fafc",
+    border: "1px solid #e2e8f0",
+    borderRadius: "8px",
+    padding: "10px 12px",
+  },
+  commentHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "4px",
+  },
+  authorBadge: {
+    fontSize: "12px",
+    fontWeight: 600,
+    color: "#1e293b",
+  },
+  commentTime: {
+    fontSize: "11px",
+    color: "#94a3b8",
+  },
+  commentText: {
+    fontSize: "13px",
+    color: "#334155",
+    margin: 0,
+  },
+  primaryBtn: {
+    backgroundColor: "#2563eb",
+    color: "#ffffff",
+    padding: "10px 18px",
+    borderRadius: "8px",
+    textDecoration: "none",
+    fontWeight: 600,
+    fontSize: "14px",
+  },
+};
