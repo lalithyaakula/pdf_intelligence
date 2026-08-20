@@ -5,6 +5,62 @@ import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
+// Helper function to generate an executive summary via Gemini
+async function generateSummary(pdfBase64: string, fileName: string): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return "Document uploaded: " + fileName;
+  }
+
+  const models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash"];
+
+  for (const model of models) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const payload = {
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                inline_data: {
+                  mime_type: "application/pdf",
+                  data: pdfBase64,
+                },
+              },
+              {
+                text: "Provide a comprehensive, structured executive summary with key takeaways and bullet points of this document.",
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 1500,
+        },
+      };
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const generatedText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (generatedText) {
+          return generatedText;
+        }
+      }
+    } catch (err) {
+      console.warn(`[Summary Generation Warning with ${model}]:`, err);
+    }
+  }
+
+  return "Document uploaded: " + fileName;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -58,12 +114,15 @@ export async function POST(req: NextRequest) {
 
     const base64Data = Buffer.from(await file.arrayBuffer()).toString("base64");
 
+    // Generate AI Summary using Gemini
+    const generatedSummary = await generateSummary(base64Data, file.name);
+
     const newDoc = await prisma.document.create({
       data: {
         title: file.name,
         filePath: "/uploads/" + file.name,
         fileData: base64Data,
-        summary: "Document uploaded: " + file.name,
+        summary: generatedSummary,
         ...(currentUserId ? { userId: currentUserId } : {}),
       },
     });
