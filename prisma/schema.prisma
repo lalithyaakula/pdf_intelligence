@@ -7,15 +7,28 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model User {
+  id        String     @id @default(cuid())
+  name      String?
+  email     String     @unique
+  password  String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  documents Document[]
+  comments  Comment[]
+}
+
 model Document {
   id        String    @id @default(cuid())
   title     String
   filePath  String
   fileData  String?   @db.Text
   summary   String?   @db.Text
+  userId    String?
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comments  Comment[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-  comments  Comment[]
 }
 
 model Comment {
@@ -25,5 +38,6 @@ model Comment {
   documentId String
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
 }
