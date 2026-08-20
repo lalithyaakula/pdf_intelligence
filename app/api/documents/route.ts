@@ -47,23 +47,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No PDF file provided." }, { status: 400 });
     }
 
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
     const base64Data = buffer.toString("base64");
 
-    const dataPayload: any = {
-      title: file.name,
-      filePath: `/uploads/${file.name}`,
-      fileData: base64Data,
-      summary: `Document: ${file.name}`,
-    };
-
-    if (currentUserId) {
-      dataPayload.userId = currentUserId;
-    }
-
     const newDoc = await prisma.document.create({
-      data: dataPayload,
+      data: {
+        title: file.name,
+        filePath: `/uploads/${file.name}`,
+        fileData: base64Data,
+        summary: `Document: ${file.name}`,
+        ...(currentUserId ? { userId: currentUserId } : {}),
+      },
     });
 
     return NextResponse.json(newDoc, { status: 201 });

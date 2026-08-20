@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import fs from "fs";
-import path from "path";
 
 export const dynamic = "force-dynamic";
 
@@ -16,67 +14,27 @@ export async function GET(
       where: { id: documentId },
     });
 
-    if (!document) {
-      return new NextResponse("Document not found", { status: 404 });
-    }
-
-    // 1. Direct Base64 Stream from Supabase Database
-    if (document.fileData) {
-      const pdfBuffer = Buffer.from(document.fileData, "base64");
-      return new NextResponse(pdfBuffer, {
-        status: 200,
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `inline; filename="${encodeURIComponent(
-            document.title || "document.pdf"
-          )}"`,
-          "Content-Length": pdfBuffer.length.toString(),
-        },
+    if (!document || !document.fileData) {
+      return new NextResponse("PDF content not found in database.", {
+        status: 404,
       });
     }
 
-    // 2. Remote URL fallback
-    if (
-      document.filePath?.startsWith("http://") ||
-      document.filePath?.startsWith("https://")
-    ) {
-      const response = await fetch(document.filePath);
-      const arrayBuffer = await response.arrayBuffer();
-      return new NextResponse(Buffer.from(arrayBuffer), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `inline; filename="${encodeURIComponent(
-            document.title || "document.pdf"
-          )}"`,
-        },
-      });
-    }
+    const fileBuffer = Buffer.from(document.fileData, "base64");
 
-    // 3. Local disk fallback
-    if (document.filePath) {
-      const cleanRelative = document.filePath.replace(/^[/\\]+/, "");
-      const diskPath = path.join(process.cwd(), "public", cleanRelative);
-
-      if (fs.existsSync(diskPath)) {
-        const fileBuffer = fs.readFileSync(diskPath);
-        return new NextResponse(fileBuffer, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": `inline; filename="${encodeURIComponent(
-              document.title || "document.pdf"
-            )}"`,
-          },
-        });
-      }
-    }
-
-    return new NextResponse("PDF content not found in database or disk.", {
-      status: 404,
+    return new Response(fileBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="${encodeURIComponent(
+          document.title || "document.pdf"
+        )}"`,
+        "Content-Length": fileBuffer.length.toString(),
+        "Cache-Control": "public, max-age=3600, immutable",
+      },
     });
   } catch (error: any) {
     console.error("[PDF Stream Error]:", error);
-    return new NextResponse("Error rendering PDF", { status: 500 });
+    return new NextResponse("Error serving PDF file", { status: 500 });
   }
 }
