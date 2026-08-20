@@ -12,31 +12,33 @@ export async function GET(
   try {
     const { id: documentId } = await params;
 
-    if (!documentId) {
-      return new NextResponse("Document ID is required", { status: 400 });
-    }
-
-    // 1. Fetch document from database
     const document = await prisma.document.findUnique({
       where: { id: documentId },
     });
 
-    if (!document || !document.filePath) {
-      return new NextResponse("Document or file record not found", { status: 404 });
+    if (!document) {
+      return new NextResponse("Document not found", { status: 404 });
     }
 
-    // 2. Handle remote URLs (e.g., Supabase Storage / S3)
+    // 1. Direct Base64 stream from Supabase PostgreSQL (Permanent & Cloud-Safe)
+    if (document.fileData) {
+      const pdfBuffer = Buffer.from(document.fileData, "base64");
+      return new NextResponse(pdfBuffer, {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `inline; filename="${encodeURIComponent(
+            document.title || "document"
+          )}.pdf"`,
+        },
+      });
+    }
+
+    // 2. Remote URL fallback
     if (
-      document.filePath.startsWith("http://") ||
-      document.filePath.startsWith("https://")
+      document.filePath?.startsWith("http://") ||
+      document.filePath?.startsWith("https://")
     ) {
       const response = await fetch(document.filePath);
-      if (!response.ok) {
-        return new NextResponse("Failed to fetch remote PDF stream", {
-          status: 502,
-        });
-      }
-
       const arrayBuffer = await response.arrayBuffer();
       return new NextResponse(Buffer.from(arrayBuffer), {
         headers: {
@@ -48,29 +50,29 @@ export async function GET(
       });
     }
 
-    // 3. Handle local disk files from /public
-    const cleanRelative = document.filePath.replace(/^[/\\]+/, "");
-    const diskPath = path.join(process.cwd(), "public", cleanRelative);
+    // 3. Local disk fallback
+    if (document.filePath) {
+      const cleanRelative = document.filePath.replace(/^[/\\]+/, "");
+      const diskPath = path.join(process.cwd(), "public", cleanRelative);
 
-    if (!fs.existsSync(diskPath)) {
-      console.error("[PDF Stream] File not found on local disk:", diskPath);
-      return new NextResponse("PDF file missing on server disk", { status: 404 });
+      if (fs.existsSync(diskPath)) {
+        const fileBuffer = fs.readFileSync(diskPath);
+        return new NextResponse(fileBuffer, {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `inline; filename="${encodeURIComponent(
+              document.title || "document"
+            )}.pdf"`,
+          },
+        });
+      }
     }
 
-    const fileBuffer = fs.readFileSync(diskPath);
-
-    return new NextResponse(fileBuffer, {
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="${encodeURIComponent(
-          document.title || "document"
-        )}.pdf"`,
-      },
+    return new NextResponse("PDF content not found in database or disk.", {
+      status: 404,
     });
   } catch (error: any) {
     console.error("[PDF Stream Error]:", error);
-    return new NextResponse(error?.message || "Internal Server Error loading PDF", {
-      status: 500,
-    });
+    return new NextResponse("Error rendering PDF", { status: 500 });
   }
 }
