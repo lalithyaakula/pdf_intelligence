@@ -12,7 +12,7 @@ export async function GET(
   try {
     const { id: documentId } = await params;
 
-    const document = await prisma.document.findUnique({
+    const document = await (prisma as any).document.findUnique({
       where: { id: documentId },
     });
 
@@ -20,15 +20,17 @@ export async function GET(
       return new NextResponse("Document not found", { status: 404 });
     }
 
-    // 1. Direct Base64 stream from Supabase PostgreSQL (Permanent & Cloud-Safe)
+    // 1. Direct Base64 Stream from Supabase Database
     if (document.fileData) {
       const pdfBuffer = Buffer.from(document.fileData, "base64");
       return new NextResponse(pdfBuffer, {
+        status: 200,
         headers: {
           "Content-Type": "application/pdf",
           "Content-Disposition": `inline; filename="${encodeURIComponent(
-            document.title || "document"
-          )}.pdf"`,
+            document.title || "document.pdf"
+          )}"`,
+          "Content-Length": pdfBuffer.length.toString(),
         },
       });
     }
@@ -41,11 +43,12 @@ export async function GET(
       const response = await fetch(document.filePath);
       const arrayBuffer = await response.arrayBuffer();
       return new NextResponse(Buffer.from(arrayBuffer), {
+        status: 200,
         headers: {
           "Content-Type": "application/pdf",
           "Content-Disposition": `inline; filename="${encodeURIComponent(
-            document.title || "document"
-          )}.pdf"`,
+            document.title || "document.pdf"
+          )}"`,
         },
       });
     }
@@ -58,11 +61,12 @@ export async function GET(
       if (fs.existsSync(diskPath)) {
         const fileBuffer = fs.readFileSync(diskPath);
         return new NextResponse(fileBuffer, {
+          status: 200,
           headers: {
             "Content-Type": "application/pdf",
             "Content-Disposition": `inline; filename="${encodeURIComponent(
-              document.title || "document"
-            )}.pdf"`,
+              document.title || "document.pdf"
+            )}"`,
           },
         });
       }
