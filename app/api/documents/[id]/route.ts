@@ -8,10 +8,17 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: documentId } = await params;
+    const { id } = await params;
 
     const document = await prisma.document.findUnique({
-      where: { id: documentId },
+      where: { id },
+      select: {
+        id: true,
+        title: true,
+        filePath: true,
+        summary: true,
+        createdAt: true,
+      },
     });
 
     if (!document) {

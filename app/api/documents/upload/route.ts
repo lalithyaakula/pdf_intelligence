@@ -1,10 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    let currentUserId: string | null = null;
+
+    if (session?.user?.email) {
+      const user = await prisma.user.findUnique({
+        where: { email: session.user.email },
+      });
+      currentUserId = user?.id || null;
+    }
+
     const formData = await req.formData();
     const file = formData.get("file") as File;
 
@@ -12,17 +24,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No PDF file provided." }, { status: 400 });
     }
 
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    const base64Data = buffer.toString("base64");
+    const base64Data = Buffer.from(await file.arrayBuffer()).toString("base64");
 
-    // Create record in Supabase with base64 binary attached
     const newDoc = await prisma.document.create({
       data: {
         title: file.name,
-        filePath: `/uploads/${file.name}`,
+        filePath: "/uploads/" + file.name,
         fileData: base64Data,
-        summary: `Document uploaded: ${file.name}`,
+        summary: "Document uploaded: " + file.name,
+        ...(currentUserId ? { userId: currentUserId } : {}),
       },
     });
 

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import fs from "fs";
-import path from "path";
 
 export const dynamic = "force-dynamic";
 
@@ -79,7 +77,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: documentId } = await params;
+    const { id } = await params;
 
     const body = await req.json();
     const message = body?.message?.trim();
@@ -96,31 +94,16 @@ export async function POST(
       );
     }
 
-    const document = await (prisma as any).document.findUnique({
-      where: { id: documentId },
+    const document = await prisma.document.findUnique({
+      where: { id },
+      select: { title: true, summary: true, fileData: true },
     });
 
     if (!document) {
       return NextResponse.json({ error: "Document not found." }, { status: 404 });
     }
 
-    // Load PDF from database base64 first, fallback to disk
-    let pdfBase64: string | null = document.fileData || null;
-
-    if (!pdfBase64 && document.filePath) {
-      const cleanRelative = document.filePath.replace(/^[/\\]+/, "");
-      const diskPath = path.join(process.cwd(), "public", cleanRelative);
-      if (fs.existsSync(diskPath)) {
-        try {
-          const fileBuffer = fs.readFileSync(diskPath);
-          if (fileBuffer.length < 20 * 1024 * 1024) {
-            pdfBase64 = fileBuffer.toString("base64");
-          }
-        } catch (err) {
-          console.warn("[Chat API] Local file read warning:", err);
-        }
-      }
-    }
+    const pdfBase64 = document.fileData || null;
 
     const systemInstruction = `You are a strict, context-bound AI document assistant dedicated EXCLUSIVELY to the attached document titled "${document.title}".
 

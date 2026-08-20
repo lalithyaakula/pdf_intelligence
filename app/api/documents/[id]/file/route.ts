@@ -8,28 +8,26 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: documentId } = await params;
+    const { id } = await params;
 
-    const document = await (prisma as any).document.findUnique({
-      where: { id: documentId },
+    const document = await prisma.document.findUnique({
+      where: { id },
     });
 
-    if (!document || !document.fileData) {
+    if (!document?.fileData) {
       return new NextResponse("PDF content not found in database.", {
         status: 404,
       });
     }
 
-    const fileBuffer = Buffer.from(document.fileData, "base64");
+    const pdfBuffer = Buffer.from(document.fileData, "base64");
 
-    return new Response(fileBuffer, {
+    return new Response(pdfBuffer, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="${encodeURIComponent(
-          document.title || "document.pdf"
-        )}"`,
-        "Content-Length": fileBuffer.length.toString(),
+        "Content-Disposition": `inline; filename="${encodeURIComponent(document.title || "document.pdf")}"`,
+        "Content-Length": pdfBuffer.length.toString(),
         "Cache-Control": "public, max-age=3600, immutable",
       },
     });
