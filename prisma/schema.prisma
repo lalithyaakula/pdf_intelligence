@@ -1,60 +1,42 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
 }
 
 model User {
   id        String     @id @default(cuid())
   email     String     @unique
   name      String?
-  password  String
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  password  String?
   documents Document[]
   comments  Comment[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 }
 
 model Document {
-  id            String    @id @default(cuid())
-  title         String
-  filename      String?
-  filePath      String?
-  fileSize      Int?      @default(0)
-  fileUrl       String?
-  extractedText String?   @db.Text
-  summary       String?   @db.Text
-  shareToken    String?   @unique
-  userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  messages      Message[]
-  comments      Comment[]
-}
-
-model Message {
-  id         String   @id @default(cuid())
-  role       String
-  content    String   @db.Text
-  documentId String
-  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now())
+  id        String    @id @default(cuid())
+  title     String
+  filePath  String
+  summary   String?
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comments  Comment[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 }
 
 model Comment {
-  id         String    @id @default(cuid())
-  content    String    @db.Text
-  authorName String?
-  userId     String?
-  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  id         String   @id @default(cuid())
+  text       String
+  authorName String   @default("Collaborator")
   documentId String
-  document   Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  parentId   String?
-  parent     Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies    Comment[] @relation("CommentReplies")
-  createdAt  DateTime  @default(now())
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
 }

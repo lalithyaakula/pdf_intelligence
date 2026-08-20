@@ -3,99 +3,237 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Sparkles } from "lucide-react";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    password: "",
-  });
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (loading) return;
 
-    const res = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData),
-    });
+    if (!email.trim() || !password.trim()) {
+      setError("Please fill in all fields.");
+      return;
+    }
 
-    if (res.ok) {
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim() || email.split("@")[0],
+          email: email.toLowerCase().trim(),
+          password,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to create account.");
+      }
+
       router.push("/login?registered=true");
+    } catch (err: any) {
+      setError(err.message || "An error occurred.");
+      setLoading(false);
     }
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", backgroundColor: "#ffffff" }}>
-      {/* DocuMind Heading */}
-      <h1 style={{ fontSize: "28px", fontWeight: "700", color: "#111827", marginBottom: "20px" }}>
-        DocuMind
-      </h1>
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#f8fafc",
+        padding: "24px",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+      }}
+    >
+      {/* Main Top Header Above Card */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          marginBottom: "24px",
+        }}
+      >
+        <Sparkles style={{ width: "28px", height: "28px", color: "#0022f5" }} />
+        <span
+          style={{
+            fontSize: "26px",
+            fontWeight: "800",
+            color: "#0f172a",
+            letterSpacing: "-0.5px",
+          }}
+        >
+          PDF Intelligence
+        </span>
+      </div>
 
-      {/* Matching Box Card */}
-      <div style={{ width: "320px", border: "1px solid #e5e7eb", padding: "28px 24px", boxSizing: "border-box" }}>
-        <h2 style={{ fontSize: "22px", fontWeight: "700", color: "#1f2937", textAlign: "center", margin: "0 0 20px 0" }}>
-          Sign Up
-        </h2>
+      {/* Main Card */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "400px",
+          backgroundColor: "#ffffff",
+          borderRadius: "24px",
+          border: "1px solid #e2e8f0",
+          boxShadow: "0 10px 30px rgba(0, 0, 0, 0.04)",
+          padding: "44px 36px",
+          boxSizing: "border-box",
+        }}
+      >
+        <div style={{ marginBottom: "28px" }}>
+          <h1
+            style={{
+              fontSize: "24px",
+              fontWeight: "700",
+              color: "#0f172a",
+              margin: 0,
+              letterSpacing: "-0.5px",
+            }}
+          >
+            Register
+          </h1>
+          <p
+            style={{
+              fontSize: "15px",
+              color: "#475569",
+              marginTop: "4px",
+              marginBottom: 0,
+              fontWeight: "400",
+            }}
+          >
+            to create an account
+          </p>
+        </div>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        {error && (
+          <div
+            style={{
+              backgroundColor: "#fef2f2",
+              border: "1px solid #fecaca",
+              color: "#dc2626",
+              padding: "10px 14px",
+              borderRadius: "10px",
+              fontSize: "13px",
+              marginBottom: "18px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <div>
-            <label style={{ display: "block", fontSize: "14px", color: "#374151", marginBottom: "6px" }}>
-              Full Name
-            </label>
             <input
               type="text"
-              placeholder="Enter full name"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               required
-              style={{ width: "100%", padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: "4px", fontSize: "14px", color: "#111827", outline: "none", boxSizing: "border-box" }}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Full Name"
+              style={{
+                width: "100%",
+                padding: "13px 16px",
+                borderRadius: "12px",
+                border: "1px solid #e2e8f0",
+                fontSize: "14px",
+                color: "#1e293b",
+                outline: "none",
+                boxSizing: "border-box",
+                backgroundColor: "#ffffff",
+              }}
             />
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: "14px", color: "#374151", marginBottom: "6px" }}>
-              Username / Email
-            </label>
             <input
               type="email"
-              placeholder="Enter email address"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               required
-              style={{ width: "100%", padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: "4px", fontSize: "14px", color: "#111827", outline: "none", boxSizing: "border-box" }}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email address"
+              style={{
+                width: "100%",
+                padding: "13px 16px",
+                borderRadius: "12px",
+                border: "1px solid #e2e8f0",
+                fontSize: "14px",
+                color: "#1e293b",
+                outline: "none",
+                boxSizing: "border-box",
+                backgroundColor: "#ffffff",
+              }}
             />
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: "14px", color: "#374151", marginBottom: "6px" }}>
-              Password
-            </label>
             <input
               type="password"
-              placeholder="Enter password"
-              value={formData.password}
-              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               required
-              style={{ width: "100%", padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: "4px", fontSize: "14px", color: "#111827", outline: "none", boxSizing: "border-box" }}
+              minLength={6}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password (min 6 characters)"
+              style={{
+                width: "100%",
+                padding: "13px 16px",
+                borderRadius: "12px",
+                border: "1px solid #e2e8f0",
+                fontSize: "14px",
+                color: "#1e293b",
+                outline: "none",
+                boxSizing: "border-box",
+                backgroundColor: "#ffffff",
+              }}
             />
           </div>
 
           <button
             type="submit"
-            style={{ width: "100%", backgroundColor: "#007bff", color: "#ffffff", border: "none", borderRadius: "4px", padding: "10px 0", fontSize: "15px", fontWeight: "500", cursor: "pointer", marginTop: "4px" }}
+            disabled={loading}
+            style={{
+              width: "100%",
+              padding: "13px",
+              borderRadius: "10px",
+              backgroundColor: "#0022f5",
+              color: "#ffffff",
+              fontSize: "14px",
+              fontWeight: "600",
+              border: "none",
+              cursor: loading ? "not-allowed" : "pointer",
+              marginTop: "8px",
+            }}
           >
-            Sign Up
+            {loading ? "Creating account..." : "Continue"}
           </button>
         </form>
 
-        <p style={{ textAlign: "center", fontSize: "13px", color: "#4b5563", margin: "16px 0 0 0" }}>
+        <div style={{ textAlign: "center", fontSize: "13px", color: "#64748b", marginTop: "28px" }}>
           Already have an account?{" "}
-          <Link href="/login" style={{ color: "#007bff", textDecoration: "none" }}>
-            Sign In
+          <Link href="/login" style={{ color: "#0f172a", fontWeight: "700", textDecoration: "none" }}>
+            Login
           </Link>
-        </p>
+        </div>
       </div>
     </div>
   );

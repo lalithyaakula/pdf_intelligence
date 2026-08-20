@@ -1,259 +1,652 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import Link from "next/link";
+import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
 import {
   FileText,
-  Upload,
+  Search,
+  Calendar,
+  Link as LinkIcon,
+  Mail,
   LogOut,
-  ExternalLink,
-  Trash2,
-  Sparkles,
   Loader2,
+  Check,
+  UploadCloud,
+  Sparkles,
 } from "lucide-react";
 
-interface DocumentItem {
+interface DocItem {
   id: string;
   title: string;
-  filename: string | null;
-  summary: string | null;
-  fileSize: number | null;
+  filePath: string;
   createdAt: string;
+  summary?: string;
 }
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [documents, setDocuments] = useState<DocItem[]>([]);
+  const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [search, setSearch] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Invite Modal State
+  const [inviteModalDoc, setInviteModalDoc] = useState<DocItem | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteSuccessMsg, setInviteSuccessMsg] = useState("");
+  const [inviteError, setInviteError] = useState("");
 
   useEffect(() => {
     if (status === "unauthenticated") {
-      router.push("/login");
+      router.replace("/login");
+    } else if (status === "authenticated") {
+      fetchDocs();
     }
-  }, [status, router]);
+  }, [status]);
 
-  const loadDocuments = async () => {
+  const fetchDocs = async () => {
     try {
       setLoading(true);
       const res = await fetch("/api/documents");
-      if (!res.ok) throw new Error("Failed to load documents");
-      const data = await res.json();
-      setDocuments(Array.isArray(data) ? data : data.documents || []);
+      if (res.ok) {
+        const data = await res.json();
+        setDocuments(Array.isArray(data) ? data : []);
+      } else {
+        setDocuments([]);
+      }
     } catch (err) {
       console.error(err);
+      setDocuments([]);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (status === "authenticated") {
-      loadDocuments();
-    }
-  }, [status]);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (file.type !== "application/pdf") {
-      setError("Please select a valid PDF file.");
-      return;
-    }
-
-    setUploading(true);
-    setError("");
 
     const formData = new FormData();
     formData.append("file", file);
 
+    setUploading(true);
     try {
       const res = await fetch("/api/documents/upload", {
         method: "POST",
         body: formData,
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to upload document");
-      }
-
-      const newDoc = await res.json();
-      if (newDoc?.id) {
-        router.push(`/documents/${newDoc.id}`);
+      const data = await res.json();
+      if (res.ok) {
+        await fetchDocs();
       } else {
-        await loadDocuments();
+        alert(data.error || "Upload failed. Please try again.");
       }
-    } catch (err: any) {
-      setError(err.message || "Failed to upload file");
+    } catch (err) {
+      alert("Error connecting to upload server.");
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
-    e.preventDefault();
+  const handleCopyLink = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-
-    if (!confirm("Are you sure you want to delete this document?")) return;
-
-    try {
-      const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setDocuments((prev) => prev.filter((d) => d.id !== id));
-      }
-    } catch (err) {
-      console.error("Failed to delete document", err);
+    if (typeof window !== "undefined") {
+      const fullUrl = `${window.location.origin}/documents/${id}`;
+      navigator.clipboard.writeText(fullUrl);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2500);
     }
   };
 
+  const handleSendInvite = async () => {
+    if (!inviteModalDoc || !inviteEmail.trim()) return;
+    setSendingInvite(true);
+    setInviteError("");
+    setInviteSuccessMsg("");
+
+    try {
+      const res = await fetch(`/api/documents/${inviteModalDoc.id}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail.trim() }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setInviteSuccessMsg(`Invite successfully dispatched to ${inviteEmail}`);
+        setInviteEmail("");
+      } else {
+        setInviteError(data.error || "Failed to send invitation.");
+      }
+    } catch {
+      setInviteError("Network error while sending invite.");
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
+  const filtered = Array.isArray(documents)
+    ? documents.filter((doc) =>
+        (doc?.title || "").toLowerCase().includes((search || "").toLowerCase())
+      )
+    : [];
+
   if (status === "loading") {
     return (
-      <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-600">
-        <Loader2 className="h-6 w-6 animate-spin text-indigo-600 mr-2" />
-        Loading session...
+      <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", backgroundColor: "#f8fafc" }}>
+        <Loader2 className="animate-spin" style={{ width: "32px", height: "32px", color: "#2563eb" }} />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-8">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-6 w-6 text-indigo-600" />
-          <h1 className="text-xl font-bold tracking-tight text-gray-900">
+    <div style={{ minHeight: "100vh", backgroundColor: "#f8fafc", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+      {/* Header */}
+      <header
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "16px 48px",
+          backgroundColor: "#ffffff",
+          borderBottom: "1px solid #e2e8f0",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div
+            style={{
+              width: "36px",
+              height: "36px",
+              backgroundColor: "#2563eb",
+              borderRadius: "10px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#ffffff",
+            }}
+          >
+            <Sparkles style={{ width: "20px", height: "20px" }} />
+          </div>
+          <span style={{ fontSize: "22px", fontWeight: "800", color: "#0f172a" }}>
             PDF Intelligence
-          </h1>
+          </span>
         </div>
 
-        <div className="flex items-center gap-4">
-          <span className="text-sm font-medium text-gray-600">
-            {session?.user?.email}
-          </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              backgroundColor: "#f1f5f9",
+              padding: "6px 14px",
+              borderRadius: "20px",
+              fontSize: "13px",
+              color: "#334155",
+            }}
+          >
+            <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#22c55e" }} />
+            {session?.user?.email || "User"}
+          </div>
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 transition-colors"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "7px 16px",
+              borderRadius: "8px",
+              border: "1px solid #cbd5e1",
+              backgroundColor: "#ffffff",
+              color: "#334155",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
           >
-            <LogOut className="h-3.5 w-3.5" />
+            <LogOut style={{ width: "14px", height: "14px" }} />
             Sign Out
           </button>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-8">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-8 border-b border-gray-200">
+      {/* Main Content Area */}
+      <main style={{ maxWidth: "1280px", margin: "0 auto", padding: "36px 32px" }}>
+        {/* Upload Box */}
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          style={{
+            border: "2px dashed #cbd5e1",
+            borderRadius: "16px",
+            backgroundColor: "#ffffff",
+            padding: "44px 20px",
+            textAlign: "center",
+            cursor: "pointer",
+            marginBottom: "40px",
+          }}
+        >
+          <input
+            type="file"
+            accept="application/pdf"
+            ref={fileInputRef}
+            onChange={handleUpload}
+            style={{ display: "none" }}
+          />
+          <div
+            style={{
+              width: "52px",
+              height: "52px",
+              borderRadius: "12px",
+              backgroundColor: "#eff6ff",
+              color: "#2563eb",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: "14px",
+            }}
+          >
+            {uploading ? (
+              <Loader2 className="animate-spin" style={{ width: "26px", height: "26px" }} />
+            ) : (
+              <UploadCloud style={{ width: "26px", height: "26px" }} />
+            )}
+          </div>
+          <h3 style={{ fontSize: "16px", fontWeight: "600", color: "#0f172a", margin: "0 0 6px 0" }}>
+            {uploading ? "Extracting text and generating AI summary..." : "Click to browse or drag and drop your PDF here"}
+          </h3>
+          <p style={{ fontSize: "13px", color: "#94a3b8", margin: 0 }}>
+            Standard PDF documents up to 50MB
+          </p>
+        </div>
+
+        {/* Section Title & Search Filter */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "24px",
+            flexWrap: "wrap",
+            gap: "16px",
+          }}
+        >
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">My Documents</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Upload PDF documents to summarize, analyze, and query with AI.
+            <h2 style={{ fontSize: "22px", fontWeight: "800", color: "#0f172a", margin: "0 0 4px 0" }}>
+              Your Document Library
+            </h2>
+            <p style={{ fontSize: "13px", color: "#64748b", margin: 0 }}>
+              Showing {filtered.length} of {documents.length} documents
             </p>
           </div>
 
-          <div>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept="application/pdf"
-              className="hidden"
+          <div style={{ position: "relative", width: "280px" }}>
+            <Search
+              style={{
+                position: "absolute",
+                left: "12px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: "16px",
+                height: "16px",
+                color: "#6366f1",
+              }}
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 transition-colors"
-            >
-              {uploading ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Uploading & Analyzing...
-                </>
-              ) : (
-                <>
-                  <Upload className="h-4 w-4" />
-                  Upload PDF
-                </>
-              )}
-            </button>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter by filename..."
+              style={{
+                width: "100%",
+                padding: "9px 12px 9px 36px",
+                borderRadius: "10px",
+                border: "1px solid #e2e8f0",
+                fontSize: "13px",
+                outline: "none",
+                boxSizing: "border-box",
+                backgroundColor: "#ffffff",
+              }}
+            />
           </div>
         </div>
 
-        {error && (
-          <div className="mt-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">
-            {error}
+        {/* Loading Spinner */}
+        {loading && (
+          <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}>
+            <Loader2 className="animate-spin" style={{ width: "28px", height: "28px", color: "#2563eb" }} />
           </div>
         )}
 
-        <div className="mt-8">
-          {loading ? (
-            <div className="flex justify-center items-center py-20 text-gray-400">
-              <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-            </div>
-          ) : documents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gray-300 py-16 text-center">
-              <FileText className="h-12 w-12 text-gray-400 stroke-1 mb-3" />
-              <h3 className="text-base font-semibold text-gray-800">
-                No documents uploaded yet
-              </h3>
-              <p className="text-sm text-gray-500 mt-1 max-w-sm">
-                Click the "Upload PDF" button to analyze your first document.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {documents.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="group relative flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-6 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all"
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <FileText className="h-5 w-5 text-indigo-600 shrink-0" />
-                        <h4 className="font-semibold text-gray-900 text-sm truncate max-w-[200px]">
-                          {doc.title || doc.filename || "Untitled Document"}
-                        </h4>
-                      </div>
-                      <button
-                        onClick={(e) => handleDelete(doc.id, e)}
-                        className="text-gray-400 hover:text-red-600 transition-colors p-1"
-                        title="Delete Document"
+        {/* Empty State */}
+        {!loading && filtered.length === 0 && (
+          <div
+            style={{
+              padding: "48px 24px",
+              textAlign: "center",
+              backgroundColor: "#ffffff",
+              borderRadius: "16px",
+              border: "1px solid #e2e8f0",
+            }}
+          >
+            <FileText style={{ width: "36px", height: "36px", color: "#94a3b8", marginBottom: "12px" }} />
+            <p style={{ fontSize: "14px", color: "#64748b", margin: 0 }}>
+              No documents uploaded yet. Upload your first PDF above!
+            </p>
+          </div>
+        )}
+
+        {/* Document Cards */}
+        {!loading && filtered.length > 0 && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(350px, 1fr))",
+              gap: "24px",
+            }}
+          >
+            {filtered.map((doc) => (
+              <div
+                key={doc.id}
+                style={{
+                  backgroundColor: "#ffffff",
+                  borderRadius: "16px",
+                  border: "1px solid #e2e8f0",
+                  padding: "24px",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "space-between",
+                }}
+              >
+                <div>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "14px", marginBottom: "16px" }}>
+                    <div
+                      style={{
+                        width: "44px",
+                        height: "44px",
+                        borderRadius: "10px",
+                        backgroundColor: "#fee2e2",
+                        color: "#ef4444",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <FileText style={{ width: "22px", height: "22px" }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <h3
+                        style={{
+                          margin: 0,
+                          fontSize: "15px",
+                          fontWeight: "700",
+                          color: "#0f172a",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        {doc.title}
+                      </h3>
+                      <p
+                        style={{
+                          margin: "4px 0 0 0",
+                          fontSize: "12px",
+                          color: "#64748b",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "5px",
+                        }}
+                      >
+                        <Calendar style={{ width: "13px", height: "13px", color: "#60a5fa" }} />
+                        {new Date(doc.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Summary Card Container */}
+                  <div
+                    style={{
+                      backgroundColor: "#f0fdf4",
+                      border: "1px solid #dcfce7",
+                      borderRadius: "12px",
+                      padding: "12px 14px",
+                      marginBottom: "20px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        marginBottom: "6px",
+                      }}
+                    >
+                      <span style={{ fontSize: "11px", fontWeight: "800", color: "#15803d", letterSpacing: "0.5px" }}>
+                        ✨ EXECUTIVE SUMMARY
+                      </span>
+                      <button
+                        onClick={() => router.push(`/documents/${doc.id}`)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          fontSize: "11px",
+                          fontWeight: "600",
+                          color: "#16a34a",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        Read full ↗
                       </button>
                     </div>
-
-                    {doc.summary && (
-                      <p className="mt-3 text-xs text-gray-600 line-clamp-3 leading-relaxed">
-                        {doc.summary}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="mt-6 flex items-center justify-between border-t border-gray-100 pt-4">
-                    <span className="text-[11px] text-gray-400">
-                      {new Date(doc.createdAt).toLocaleDateString()}
-                    </span>
-                    <Link
-                      href={`/documents/${doc.id}`}
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "12px",
+                        lineHeight: "1.5",
+                        color: "#166534",
+                        display: "-webkit-box",
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                      }}
                     >
-                      Open <ExternalLink className="h-3.5 w-3.5" />
-                    </Link>
+                      {doc.summary || "Summary ready for interactive analysis."}
+                    </p>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+
+                {/* Bottom Action Buttons */}
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <button
+                    onClick={() => router.push(`/documents/${doc.id}`)}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px",
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      backgroundColor: "#2563eb",
+                      color: "#ffffff",
+                      fontWeight: "600",
+                      fontSize: "13px",
+                      border: "none",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Open →
+                  </button>
+
+                  <button
+                    onClick={(e) => handleCopyLink(doc.id, e)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      padding: "9px 12px",
+                      borderRadius: "8px",
+                      border: "1px solid #e2e8f0",
+                      backgroundColor: "#ffffff",
+                      color: "#475569",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {copiedId === doc.id ? (
+                      <>
+                        <Check style={{ width: "14px", height: "14px", color: "#16a34a" }} />
+                        Copied!
+                      </>
+                    ) : (
+                      <>
+                        <LinkIcon style={{ width: "14px", height: "14px", color: "#94a3b8" }} />
+                        Link
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setInviteModalDoc(doc);
+                      setInviteSuccessMsg("");
+                      setInviteError("");
+                      setInviteEmail("");
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      padding: "9px 12px",
+                      borderRadius: "8px",
+                      border: "1px solid #e2e8f0",
+                      backgroundColor: "#ffffff",
+                      color: "#475569",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Mail style={{ width: "14px", height: "14px", color: "#c084fc" }} />
+                    Invite
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </main>
+
+      {/* Live Email Invite Modal */}
+      {inviteModalDoc && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(15, 23, 42, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "440px",
+              backgroundColor: "#ffffff",
+              borderRadius: "16px",
+              padding: "24px",
+              boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)",
+            }}
+          >
+            <h3 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: "700", color: "#0f172a" }}>
+              Invite to Collaborate
+            </h3>
+            <p style={{ margin: "0 0 16px 0", fontSize: "13px", color: "#64748b" }}>
+              Dispatch an email invitation for <strong>{inviteModalDoc.title}</strong>.
+            </p>
+
+            {inviteSuccessMsg && (
+              <div style={{ padding: "10px 14px", borderRadius: "8px", backgroundColor: "#f0fdf4", color: "#16a34a", fontSize: "13px", marginBottom: "14px" }}>
+                {inviteSuccessMsg}
+              </div>
+            )}
+
+            {inviteError && (
+              <div style={{ padding: "10px 14px", borderRadius: "8px", backgroundColor: "#fef2f2", color: "#dc2626", fontSize: "13px", marginBottom: "14px" }}>
+                {inviteError}
+              </div>
+            )}
+
+            <div style={{ marginBottom: "16px" }}>
+              <input
+                type="email"
+                placeholder="colleague@example.com"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
+                  outline: "none",
+                }}
+              />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button
+                onClick={() => setInviteModalDoc(null)}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1",
+                  backgroundColor: "#ffffff",
+                  cursor: "pointer",
+                  fontSize: "13px",
+                  fontWeight: 500,
+                }}
+              >
+                Close
+              </button>
+              <button
+                onClick={handleSendInvite}
+                disabled={sendingInvite || !inviteEmail.trim()}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: "8px",
+                  backgroundColor: "#2563eb",
+                  color: "#ffffff",
+                  fontWeight: 600,
+                  border: "none",
+                  cursor: sendingInvite ? "not-allowed" : "pointer",
+                  fontSize: "13px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                {sendingInvite && <Loader2 className="animate-spin" style={{ width: "14px", height: "14px" }} />}
+                Send Invite
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

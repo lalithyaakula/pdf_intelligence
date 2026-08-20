@@ -3,47 +3,76 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-export async function POST(req: NextRequest, context: any) {
+export const dynamic = "force-dynamic";
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
-    const rawParams = context?.params ? await context.params : null;
-    const urlParts = req.nextUrl.pathname.split("/").filter(Boolean);
-    const idOrToken = rawParams?.id || urlParts[urlParts.length - 2];
+    const { id: documentId } = await params;
+
+    if (!documentId) {
+      return NextResponse.json([], { status: 200 });
+    }
+
+    const comments = await prisma.comment.findMany({
+      where: { documentId },
+      orderBy: { createdAt: "asc" },
+    });
+
+    return NextResponse.json(comments || [], { status: 200 });
+  } catch (error: any) {
+    console.error("[Comments GET Error]:", error);
+    return NextResponse.json([], { status: 200 });
+  }
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    const { id: documentId } = await params;
 
     const body = await req.json();
-    const { authorName, content, parentId } = body;
+    const text = body?.text?.trim();
 
-    if (!content || !content.trim()) {
+    if (!text) {
       return NextResponse.json({ error: "Comment cannot be empty." }, { status: 400 });
     }
 
-    const document = await prisma.document.findFirst({
-      where: {
-        OR: [{ id: idOrToken }, { shareToken: idOrToken }],
-      },
-    });
+    const author =
+      session?.user?.name ||
+      session?.user?.email?.split("@")[0] ||
+      body?.authorName ||
+      "Collaborator";
 
-    if (!document) {
-      return NextResponse.json({ error: "Document not found." }, { status: 404 });
+    let currentUserId: string | null = null;
+    if (session?.user?.email) {
+      try {
+        const user = await prisma.user.findUnique({
+          where: { email: session.user.email },
+        });
+        currentUserId = user?.id || null;
+      } catch {
+        currentUserId = null;
+      }
     }
 
-    const session = await getServerSession(authOptions);
-    const resolvedAuthorName = session?.user?.name || authorName?.trim() || "Guest Reviewer";
-
-    const comment = await prisma.comment.create({
+    const newComment = await prisma.comment.create({
       data: {
-        content: content.trim(),
-        authorName: resolvedAuthorName,
-        documentId: document.id,
-        parentId: parentId || null,
-      },
-      include: {
-        replies: true,
+        text,
+        authorName: author,
+        documentId,
+        ...(currentUserId ? { userId: currentUserId } : {}),
       },
     });
 
-    return NextResponse.json({ comment }, { status: 201 });
+    return NextResponse.json(newComment, { status: 201 });
   } catch (error: any) {
-    console.error("Post comment error:", error);
+    console.error("[Comments POST Error]:", error);
     return NextResponse.json(
       { error: error?.message || "Failed to post comment." },
       { status: 500 }

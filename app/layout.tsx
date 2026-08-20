@@ -1,25 +1,22 @@
-import type { Metadata } from "next"
-import { Inter } from "next/font/google"
-import "./globals.css"
-import { Providers } from "./providers"
-
-const inter = Inter({ subsets: ["latin"] })
+import type { Metadata } from "next";
+import "./globals.css";
+import { AuthProvider } from "@/components/providers/AuthProvider";
 
 export const metadata: Metadata = {
-  title: "DocuMind",
-  description: "Smart PDF Management",
-}
+  title: "PDF Intelligence",
+  description: "AI-Powered PDF Intelligence Workspace",
+};
 
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <Providers>{children}</Providers>
+      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased font-sans">
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
-  )
+  );
 }

@@ -1,57 +1,59 @@
-import { NextResponse } from "next/server"
-import { hash } from "bcryptjs"
-import { prisma } from "@/lib/prisma"
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import bcrypt from "bcryptjs";
 
-export async function POST(request: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const { name, email, password } = await request.json()
+    const body = await req.json();
+    const { email, password, name } = body;
 
-    if (!name || !email || !password) {
+    if (!email || !password) {
       return NextResponse.json(
-        { error: "All fields are required" },
+        { error: "Email and password are required." },
         { status: 400 }
-      )
+      );
     }
 
-    if (password.length < 6) {
-      return NextResponse.json(
-        { error: "Password must be at least 6 characters" },
-        { status: 400 }
-      )
-    }
+    const normalizedEmail = email.toLowerCase().trim();
 
+    // Check if email already exists before attempting insert
     const existingUser = await prisma.user.findUnique({
-      where: { email }
-    })
+      where: { email: normalizedEmail },
+    });
 
     if (existingUser) {
       return NextResponse.json(
-        { error: "Email already registered" },
+        { error: "An account with this email already exists. Please sign in." },
         { status: 400 }
-      )
+      );
     }
 
-    const hashedPassword = await hash(password, 12)
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await prisma.user.create({
+    const newUser = await prisma.user.create({
       data: {
-        name,
-        email,
+        email: normalizedEmail,
         password: hashedPassword,
-      }
-    })
-
-    const { password: _, ...userWithoutPassword } = user
+        name: name?.trim() || normalizedEmail.split("@")[0],
+      },
+    });
 
     return NextResponse.json(
-      { user: userWithoutPassword, message: "Account created" },
+      { message: "Account created successfully", userId: newUser.id },
       { status: 201 }
-    )
-  } catch (error) {
-    console.error("Registration error:", error)
+    );
+  } catch (error: any) {
+    if (error.code === "P2002") {
+      return NextResponse.json(
+        { error: "An account with this email already exists. Please sign in." },
+        { status: 400 }
+      );
+    }
+
+    console.error("Registration error:", error);
     return NextResponse.json(
-      { error: "Something went wrong" },
+      { error: "Internal Server Error. Please try again." },
       { status: 500 }
-    )
+    );
   }
 }

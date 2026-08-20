@@ -1,8 +1,4 @@
-Yes. Based on your current file tree, add **`skills-lock.json`** and the **`*.sqlite`** variants so local databases and assistant lock files are never committed accidentally.
 
-Here is the final, complete **`.gitignore`** ready for your repo:
-
-```text
 # dependencies
 /node_modules
 /.pnp
